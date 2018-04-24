@@ -25,6 +25,43 @@ def subsequent_mask(size):
     return torch.from_numpy(subsequent_mask) == 0
 
 '''
+Initializes a Transformer Attention model
+'''
+class TransformerAttention(nn.Module):
+    def __init__(self, src_vocab, tgt_vocab, N = 6, d_model = 512,
+                d_ff = 2048, h = 8, dropout = 0.1):
+        # Convenience
+        c = copy.deepcopy
+
+        attn = MultiHeadedAttention(h, d_model)
+        ff = PositionwiseFeedForward(d_model, d_ff, dropout)
+        position = PositionalEncoding(d_model, dropout)
+        self.model = EncoderDecoder(
+            Encoder(EncoderLayer(d_model, c(attn), c(ff), dropout), N),
+            Decoder(DecoderLayer(d_model, c(attn), c(attn), c(ff), dropout), N),
+            nn.Sequential(Embeddings(d_model, src_vocab), c(position)),
+            nn.Sequential(Embeddings(d_model, tgt_vocab), c(position)),
+            Generator(d_model, tgt_vocab)
+        )
+        
+        self.src_vocab = src_vocab
+        self.tgt_vocab = tgt_vocab
+        self.N = N
+        self.d_model = d_model
+        self.d_ff = d_ff
+        self.h = h
+        self.dropout = dropout
+
+    # Initialize parameters using Glorot/fan_avg
+    def init(self):
+        for p in self.model.parameters():
+            if p.dim() > 1:
+                nn.init.xavier_uniform(p)
+
+    def forward(self, src, tgt, src_mask, tgt_mask):
+        return self.model(src, tgt, src_mask, tgt_mask)
+
+'''
 Base container for an encoder/decoder-type model. The actual encoder and
 decoder models are passed in at initalization.
 '''
@@ -74,7 +111,7 @@ class Generator(nn.Module):
         return F.log_softmax(self.proj(x), dim = -1)
 
 '''
-Implements an encoder module as a stack of N layers. The paper uses N=2 layers.
+Implements an encoder module as a stack of N layers. The paper uses N=6 layers.
 '''
 class Encoder(nn.Module):
     def __init__(self, layer, N):
