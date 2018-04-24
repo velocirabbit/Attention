@@ -1,6 +1,11 @@
 '''
 Implements the Transformer attention as a PyTorch layer, and as described by
-the Harvard NLP group in this paper: https://arxiv.org/abs/1706.03762
+the Harvard NLP group in this paper: https://arxiv.org/abs/1706.03762.
+
+Note that gradient descent should be done using Adam optimization where the
+learning rate first increases for a number of warmup steps before being
+annealed proportionally to the inverse square root of the step number. This is
+implemented in the `NoamOpt` class in this file.
 '''
 import numpy as np
 import torch
@@ -11,7 +16,6 @@ from torch.autograd import Variable
 
 import copy
 import math
-import time
 
 # Helper function that produces N copies of module
 def clones(module, N):
@@ -25,11 +29,15 @@ def subsequent_mask(size):
     return torch.from_numpy(subsequent_mask) == 0
 
 '''
-Initializes a Transformer Attention model
+Initializes a Transformer Attention model.
+
+NOTE: Currently better to create the EncoderDecoder from scratch rather than
+using this wrapper class. For some reason, using this messes up model training.
 '''
 class TransformerAttention(nn.Module):
     def __init__(self, src_vocab, tgt_vocab, N = 6, d_model = 512,
                 d_ff = 2048, h = 8, dropout = 0.1):
+        super(TransformerAttention, self).__init__()
         # Convenience
         c = copy.deepcopy
 
@@ -54,12 +62,42 @@ class TransformerAttention(nn.Module):
 
     # Initialize parameters using Glorot/fan_avg
     def init(self):
-        for p in self.model.parameters():
+        for p in self.parameters():
             if p.dim() > 1:
                 nn.init.xavier_uniform(p)
 
     def forward(self, src, tgt, src_mask, tgt_mask):
         return self.model(src, tgt, src_mask, tgt_mask)
+    
+    def parameters(self):
+        return self.model.parameters()
+
+    @property
+    def encoder(self):
+        return self.model.encoder
+
+    @property
+    def decoder(self):
+        return self.model.decoder
+
+    @property
+    def src_embed(self):
+        return self.model.src_embed
+    @property
+    def tgt_embed(self):
+        return self.model.tgt_embed
+
+    @property
+    def generator(self):
+        return self.model.generator
+
+    @property
+    def encode(self):
+        return self.model.encode
+
+    @property
+    def decode(self):
+        return self.model.decode
 
 '''
 Base container for an encoder/decoder-type model. The actual encoder and
@@ -117,7 +155,7 @@ class Encoder(nn.Module):
     def __init__(self, layer, N):
         super(Encoder, self).__init__()
         self.layers = clones(layer, N)
-        self.norm(LayerNorm, layer.size)
+        self.norm = LayerNorm(layer.size)
 
     def forward(self, x, mask):
         for layer in self.layers:
@@ -177,7 +215,7 @@ next sublayer.
 class EncoderLayer(nn.Module):
     def __init__(self, size, self_attn, feed_forward, dropout):
         super(EncoderLayer, self).__init__()
-        self.self_self_attn
+        self.self_attn = self_attn
         self.feed_forward = feed_forward
         self.sublayer = clones(SublayerConnection(size, dropout), 2)
         self.size = size
@@ -356,3 +394,35 @@ class PositionalEncoding(nn.Module):
         return self.dropout(x)
 
     
+
+
+class NoamOpt:
+    def __init__(self, model_size, factor, warmup, optimizer):
+        self.optimizer = optimizer
+        self._step = 0
+        self.warmup = warmup
+        self.factor = factor
+        self.model_size = model_size
+        self._rate = 0
+        
+    def step(self):
+        self._step += 1
+        rate = self.rate()
+        for p in self.optimizer.param_groups:
+            p['lr'] = rate
+        self._rate = rate
+        self.optimizer.step()
+        
+    def rate(self, step = None):
+        if step is None:
+            step = self._step
+        return self.factor * (self.model_size**(-0.5) * min(step**(-0.5), step*self.warmup**(-1.5)))
+    
+def get_std_opt(model):
+    return NoamOpt(
+        model.src_embed[0].d_model, 2, 4000,
+        torch.optim.Adam(
+            model.parameters(), lr = 0, betas = (0.9, 0.98), eps = 1e-9
+        )
+    )
+
