@@ -209,7 +209,7 @@ Implements a single encoder layer. Each layer has two sublayers:
     1. a multi-head self-attention mechanism
     2. a position-wise fully-connected feed-forward network
 The output of each sublayer has a residual connection added, and then is
-passed through a normalization layer before being passed on asthe input to the
+passed through a normalization layer before being passed on as the input to the
 next sublayer.
 '''
 class EncoderLayer(nn.Module):
@@ -272,12 +272,16 @@ are also packed together into matrices K and V.
 '''
 def attention(query, key, value, mask = None, dropout = None):
     d_k = query.size(-1)
+    # query:  [nbatches, h, seq_len, d_k]
+    # key.T:  [nbatches, h, d_k, seq_len]
+    # scores: [nbatches, h, seq_len, seq_len]
     scores = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(d_k)
     if mask is not None:
         scores = scores.masked_fill(mask == 0, -1e9)
     p_attn = F.softmax(scores, dim = -1)
     if dropout is not None:
         p_attn = dropout(p_attn)
+    # matmul(p_attn, value) => [nbatches, h, seq_len, d_k]
     return torch.matmul(p_attn, value), p_attn
 
 '''
@@ -317,6 +321,7 @@ class MultiHeadedAttention(nn.Module):
         nbatches = query.size(0)
 
         # Perform batched linear projections: d_model => h x d_k
+        # Each is of size [nbatches, h, seq_len, d_k]
         query, key, value = [
             l(x).view(nbatches, -1, self.h, self.d_k).transpose(1, 2)
             for l, x in zip(self.linears, (query, key, value))
@@ -326,6 +331,7 @@ class MultiHeadedAttention(nn.Module):
         x, self.attn = attention(query, key, value, mask = mask, dropout = self.dropout)
 
         # Concat using a view and apply a final linear transformation
+        # [nbatches, seq_len, h, d_k]
         x = x.transpose(1, 2).contiguous().view(nbatches, -1, self.h*self.d_k)
         return self.linears[-1](x)
 
