@@ -12,6 +12,7 @@ from torch.nn import functional as F
 class RecurrentAttention(nn.Module):
     '''
     Initializes a recurrent attention mechanism.
+    
     Inputs:
         `in_size`: size of the input vectors. If bi-directional, use just the
             size of the vector in just the forward direction, but make sure to
@@ -19,7 +20,7 @@ class RecurrentAttention(nn.Module):
             `alignment` layer (the default will handle that automatically)
         `h_size`: size of the recurrent hidden states
         `out_size`: size of the output vectors
-        `dropout`: dropout percentage for the input to the recurrent subnetwork
+        `dropout`: dropout rate (chance of dropping)
         `alignment`: a PyTorch module to use as the alignment subnetwork. If
             `None`, defaults to a single-layer, fully-connected, linear network.
             The input to this layer should be of size `[..., in_size+h_size]`
@@ -143,7 +144,7 @@ class RecurrentAttention(nn.Module):
             align_wts = self.softmax(align_logs)
             # Get the context vector for this step as a weighted sum of all steps
             align_wts = align_wts.expand_as(inputs)                             # [seq_len, batch_size, in_size]
-            c = align_wts.mul(inputs).sum(0).squeeze(0)                         # [batch_size, in_size]
+            c = align_wts.mul(inputs).sum(0)  # `sum()` automatically squeezes  # [batch_size, in_size]
             # Pass the context vector through the recurrent subnetwork
             rnn_in = torch.cat([self.drop(c), y], -1)                           # [batch_size, in_size+out_size]
             new_rnn_states = []

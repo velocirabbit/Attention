@@ -14,249 +14,20 @@ import torch.nn.functional as F
 
 from torch.autograd import Variable
 
-import copy
 import math
 
-# Helper function that produces N copies of module
+# Produces N copies of a module
 def clones(module, N):
     return nn.ModuleList([copy.deepcopy(module) for _ in range(N)])
 
-# Helper function that creates a mask to zero out subsequent positions (using
-# a lower triangle matrix)
+# Creates a mask to zero out subsequent positions using a lower triangle matrix
 def subsequent_mask(size):
     attn_shape = (1, size, size)
     subsequent_mask = np.triu(np.ones(attn_shape), k = 1).astype('uint8')
     return torch.from_numpy(subsequent_mask) == 0
-
-'''
-Initializes a Transformer Attention model.
-
-NOTE: Currently better to create the EncoderDecoder from scratch rather than
-using this wrapper class. For some reason, using this messes up model training.
-'''
-class TransformerAttention(nn.Module):
-    def __init__(self, src_vocab, tgt_vocab, N = 6, d_model = 512,
-                d_ff = 2048, h = 8, dropout = 0.1):
-        super(TransformerAttention, self).__init__()
-        # Convenience
-        c = copy.deepcopy
-
-        attn = MultiHeadedAttention(h, d_model)
-        ff = PositionwiseFeedForward(d_model, d_ff, dropout)
-        position = PositionalEncoding(d_model, dropout)
-        self.model = EncoderDecoder(
-            Encoder(EncoderLayer(d_model, c(attn), c(ff), dropout), N),
-            Decoder(DecoderLayer(d_model, c(attn), c(attn), c(ff), dropout), N),
-            nn.Sequential(Embeddings(d_model, src_vocab), c(position)),
-            nn.Sequential(Embeddings(d_model, tgt_vocab), c(position)),
-            Generator(d_model, tgt_vocab)
-        )
-        
-        self.src_vocab = src_vocab
-        self.tgt_vocab = tgt_vocab
-        self.N = N
-        self.d_model = d_model
-        self.d_ff = d_ff
-        self.h = h
-        self.dropout = dropout
-
-    # Initialize parameters using Glorot/fan_avg
-    def init(self):
-        for p in self.parameters():
-            if p.dim() > 1:
-                nn.init.xavier_uniform(p)
-
-    def forward(self, src, tgt, src_mask, tgt_mask):
-        return self.model(src, tgt, src_mask, tgt_mask)
     
-    def parameters(self):
-        return self.model.parameters()
-
-    @property
-    def encoder(self):
-        return self.model.encoder
-
-    @property
-    def decoder(self):
-        return self.model.decoder
-
-    @property
-    def src_embed(self):
-        return self.model.src_embed
-    @property
-    def tgt_embed(self):
-        return self.model.tgt_embed
-
-    @property
-    def generator(self):
-        return self.model.generator
-
-    @property
-    def encode(self):
-        return self.model.encode
-
-    @property
-    def decode(self):
-        return self.model.decode
-
 '''
-Base container for an encoder/decoder-type model. The actual encoder and
-decoder models are passed in at initalization.
-'''
-class EncoderDecoder(nn.Module):
-    '''
-    `encoder`  : PyTorch module that takes as input `(src, src_mask)` and
-        returns the encoded input
-    `decoder`  : PyTorch module that takes as input `(src, src_mask, tgt, tgt_mask)`
-        and returns the decoded input
-    `src_embed`: PyTorch module that takes as input `src` and returns an
-        embedded representation
-    `tgt_embed`: PyTorch module that takes as input `src` and returns an
-        unembedded representation
-    `generator`: PyTorch module with a softmax output
-    '''
-    def __init__(self, encoder, decoder, src_embed, tgt_embed, generator):
-        super(EncoderDecoder, self).__init__()
-        self.encoder = encoder
-        self.decoder = decoder
-        self.src_embed = src_embed
-        self.tgt_embed = tgt_embed
-        self.generator = generator
-
-    # Step forward using the masked source and target data
-    def forward(self, src, tgt, src_mask, tgt_mask):
-        return self.decode(
-            self.encode(src, src_mask), src_mask, tgt, tgt_mask
-        )
-
-    # Step forward, encoding the masked source data
-    def encode(self, src, src_mask):
-        return self.encoder(self.src_embed(src), src_mask)
-
-    # Step forward, decoding the masked target data
-    def decode(self, memory, src_mask, tgt, tgt_mask):
-        return self.decoder(self.tgt_embed(tgt), memory, src_mask, tgt_mask)
-
-'''
-Standard linear + softmax layer
-'''
-class Generator(nn.Module):
-    def __init__(self, d_model, vocab):
-        super(Generator, self).__init__()
-        self.proj = nn.Linear(d_model, vocab)
-
-    def forward(self, x):
-        return F.log_softmax(self.proj(x), dim = -1)
-
-'''
-Implements an encoder module as a stack of N layers. The paper uses N=6 layers.
-'''
-class Encoder(nn.Module):
-    def __init__(self, layer, N):
-        super(Encoder, self).__init__()
-        self.layers = clones(layer, N)
-        self.norm = LayerNorm(layer.size)
-
-    def forward(self, x, mask):
-        for layer in self.layers:
-            x = layer(x, mask)
-        return self.norm(x)
-
-'''
-Implements a decoder module as a stack of N layers. The paper uses N=6 layers.
-'''
-class Decoder(nn.Module):
-    def __init__(self, layer, N):
-        super(Decoder, self).__init__()
-        self.layers = clones(layer, N)
-        self.norm = LayerNorm(layer.size)
-
-    def forward(self, x, memory, src_mask, tgt_mask):
-        for layer in self.layers:
-            x = layer(x, memory, src_mask, tgt_mask)
-        return self.norm(x)
-
-'''
-Implements a normalization layer
-'''
-class LayerNorm(nn.Module):
-    def __init__(self, features, eps = 1e-6):
-        super(LayerNorm, self).__init__()
-        self.a_2 = nn.Parameter(torch.ones(features))
-        self.b_2 = nn.Parameter(torch.zeros(features))
-        self.eps = eps
-
-    def forward(self, x):
-        mean = x.mean(-1, keepdim = True)
-        std = x.std(-1, keepdim = True)
-        return self.a_2 * (x - mean) / (std + self.eps) + self.b_2
-
-'''
-Implements a residual connection followed by a normalization layer
-'''
-class SublayerConnection(nn.Module):
-    def __init__(self, size, dropout):
-        super(SublayerConnection, self).__init__()
-        self.norm = LayerNorm(size)
-        self.dropout = nn.Dropout(dropout)
-
-    # Feed-forward step into the sublayer, plus a residual connection and layer
-    # normalization on the other side
-    def forward(self, x, sublayer):
-        return x + self.dropout(sublayer(self.norm(x)))
-'''
-Implements a single encoder layer. Each layer has two sublayers:
-    1. a multi-head self-attention mechanism
-    2. a position-wise fully-connected feed-forward network
-The output of each sublayer has a residual connection added, and then is
-passed through a normalization layer before being passed on as the input to the
-next sublayer.
-'''
-class EncoderLayer(nn.Module):
-    def __init__(self, size, self_attn, feed_forward, dropout):
-        super(EncoderLayer, self).__init__()
-        self.self_attn = self_attn
-        self.feed_forward = feed_forward
-        self.sublayer = clones(SublayerConnection(size, dropout), 2)
-        self.size = size
-
-    def forward(self, x, mask):
-        x = self.sublayer[0](x, lambda x: self.self_attn(x, x, x, mask))
-        return self.sublayer[1](x, self.feed_forward)
-
-'''
-Implements a single decoder layer. Each layer has three sublayers, the first
-and last being the same as in an encoder layer (with the first sublayer's
-inputs masked):
-    1. a masked multi-head self-attention mechanism. The masking is used to
-       prevent positions from attending to subsequent positions; this, combined
-       with the fact that the output embeddings are offset by one position,
-       ensures that the predictions for position i can depend only on the known
-       outputs at positions less than i
-    2. a multi-head self-attention mechanism. This is performed over the output
-       of the encoder stack
-    3. a position-wise fully-connected feed-forward network
-Like with the encoder layers, the output of each sublayer has a residual
-connection added, and then is passed through a normalization layer before being
-passed on as the input to the next sublayer.
-'''
-class DecoderLayer(nn.Module):
-    def __init__(self, size, self_attn, src_attn, feed_forward, dropout):
-        super(DecoderLayer, self).__init__()
-        self.size = size
-        self.self_attn = self_attn
-        self.src_attn = src_attn
-        self.feed_forward = feed_forward
-        self.sublayer = clones(SublayerConnection(size, dropout), 3)
-
-    def forward(self, x, memory, src_mask, tgt_mask):
-        m = memory
-        x = self.sublayer[0](x, lambda x: self.self_attn(x, x, x, tgt_mask))
-        x = self.sublayer[1](x, lambda x: self.src_attn(x, m, m, src_mask))
-        return self.sublayer[2](x, self.feed_forward)
-
-'''
-Their Scaled Dot-Product Attention is computed as:
+Calculates the scaled dot-product attention, defined as:
 
     Attention(Q, K, V) = softmax( (Q x K^T)/sqrt(d_k) ) x V
 
@@ -283,6 +54,193 @@ def attention(query, key, value, mask = None, dropout = None):
         p_attn = dropout(p_attn)
     # matmul(p_attn, value) => [nbatches, h, seq_len, d_k]
     return torch.matmul(p_attn, value), p_attn
+
+    
+class TransformerAttention(nn.Module):
+    '''
+    Initializes a Transformer Attention mechanism. The main focus of this
+    implementation are the encoder and decoder stacks, but since this type of
+    attention mechanism is typically used with positional encoding added to the
+    input embeddings, there's the option to do so; this should probably only be
+    used when the input to this layer is the output of an embedding layer, but
+    maybe there's some innovation I'm missing.
+    
+    Inputs:
+        `src_vocab`: size of the source vocabulary
+        `tgt_vocab`: size of the target vocabulary
+        `N`: number of encoder and decoder layers
+        `d_embed`: embedding (and general model) size
+        `d_ff`: size of the position-wise, fully-connected feed-forward layers
+        `h`: number of attention heads
+        `encode_position`: whether or not to add positional encoding to the inputs
+        `pos_enc_max_len`: maximum length of the sequece positions to encode.
+            Ignored if `encode_position` is `False`.
+        `dropout`: dropout rate (chance of dropping)
+    '''
+    def __init__(self, src_vocab, tgt_vocab, N = 6, d_model = 512, d_ff, h = 8,
+                encode_position = True, pos_enc_max_len = 5000, dropout = 0.1):
+        super(TransformerAttention, self).__init__()
+        
+        # Initialize some basic layers
+        self.dropout = nn.Dropout(dropout)
+        self.relu = nn.ReLU()
+        
+        # Initialize a positional encoding layer if needed
+        if encode_position:
+            self.src_position = PositionalEncoding(d_model, d_ff, dropout, pos_enc_max_len)
+            self.tgt_position = PositionalEncoding(d_model, d_ff, dropout, pos_enc_max_len)
+            
+        # Source and target normalizations
+        self.src_norm = LayerNorm(d_model)
+        self.tgt_norm = LayerNorm(d_model)
+            
+        # Initialize the encoder and decoder layers
+        self.encoder_stack = [
+            EncoderLayer(d_model, d_ff, h, dropout) for _ in range(N)
+        ]
+        self.decoder_stack = [
+            DecoderLayer(d_model, d_ff, h, dropout) for _ in range(N)
+        ]
+        
+        self.src_vocab = src_vocab
+        self.tgt_vocab = tgt_vocab
+        self.N = N
+        self.d_model = d_model
+        self.d_ff = d_ff
+        self.h = h
+        self.encode_position = encode_position
+        self.pos_enc_max_len = pos_enc_max_len
+        
+    def forward(self, src, tgt, src_mask, tgt_mask):
+        if self.encode_position:
+            # Apply positional encoding
+            src = self.src_position(src)
+            tgt = self.tgt_position(tgt)
+        # Normalize source and target
+        src_norm = self.src_norm(src)
+        tgt_norm = self.tgt_norm(tgt)
+            
+        # Run the input source through the encoder
+        memory = src_norm
+        for encoder in self.encoder_stack:
+            memory = encoder(memory, src_mask)
+            
+        # Input the encoder memory to the decoder and run it forward
+        output = tgt_norm
+        for decoder in self.decoder_stack:
+            output = decoder(output, memory, src_mask, tgt_mask)
+            
+        return output
+
+            
+'''
+Implements a single encoder layer. Each layer has two sublayers:
+    1. a multi-headed self-attention mechanism
+    2. a position-wise, fully-connected feed-forward network
+The output of each sublayer has a residual connection added, and then is
+passed through a normalization layer before being passed on as the input to the
+next sublayer.
+'''
+class EncoderLayer(nn.Module):
+    def __init__(self, d_model, d_ff, h, dropout):
+        super(EncoderLayer, self).__init__()
+        # Basic layers
+        self.dropout = nn.Dropout(dropout)
+        
+        # Multi-headed self-attention sublayer
+        self.attn = MultiHeadedAttention(h, d_model, dropout)
+        # Attention output normalization
+        self.attn_norm = LayerNorm(d_model)
+        # Position-wise, fully-connected feed-forward sublayer
+        self.ff = PositionwiseFeedForward(d_model, d_ff, dropout)
+        # PositionwiseFeedForward output normalization
+        self.ff_norm = LayerNorm(d_model)
+        
+        self.size = d_model
+        self.d_ff = d_ff
+        self.h = h
+        
+    def forward(self, x, mask):
+        # Get the output of the multi-headed self-attention mechanism
+        attn_out = self.attn(x, x, x, mask)
+        # Add the residual connections
+        attn_res = x + self.dropout(attn_norm)
+        # Normalize the residual attention output
+        attn_norm = self.attn_norm(attn_res)
+        
+        # Get the output of the position-wise, fully-connected feed-forward network
+        ff_out = self.ff(attn_norm)
+        # Add the residual connections
+        ff_res = attn_norm + self.dropout(ff_out)
+        # Normalize the residual PositionwiseFeedForward output
+        ff_norm = self.ff_norm(ff_res)
+        
+        return ff_norm
+
+        
+'''
+Implements a single decoder layer. Each layer has three sublayers, the first
+and last being the same as in an encoder layer (with the first sublayer's
+inputs masked):
+    1. a masked multi-head self-attention mechanism. The masking is used to
+       prevent positions from attending to subsequent positions; this, combined
+       with the fact that the output embeddings are offset by one position,
+       ensures that the predictions for position i can depend only on the known
+       outputs at positions less than i
+    2. a multi-head source attention mechanism. This is performed over the
+       output of the encoder stack
+    3. a position-wise fully-connected feed-forward network
+Like with the encoder layers, the output of each sublayer has a residual
+connection added, and then is passed through a normalization layer before being
+passed on as the input to the next sublayer.
+'''
+class DecoderLayer(nn.Module):
+    def __init__(self, d_model, d_ff, h, dropout):
+        super(DecoderLayer, self).__init__()
+        # Basic layers
+        self.dropout = nn.Dropout(dropout)
+        
+        # Masked multi-headed self-attention sublayer
+        self.self_attn = MultiHeadedAttention(h, d_model, dropout)
+        # Self-attention normalization
+        self.self_attn_norm = LayerNorm(d_model)
+        # Multi-headed source attention sublayer
+        self.src_attn = MultiHeadedAttention(h, d_model, dropout)
+        # Source attention normalization
+        self.src_attn_norm = LayerNorm(d_model)
+        # Position-wise, fully-connected feed-forward sublayer
+        self.ff = PositionwiseFeedForward(d_model, d_ff, dropout)
+        # PositionwiseFeedForward normalization
+        self.ff_norm = LayerNorm(d_model)
+        
+        self.d_model = d_model
+        self.d_ff = d_ff
+        self.h = h
+        
+    def forward(self, x, memory, src_mask, tgt_mask):
+        # Masked self-attention output
+        self_attn_out = self.self_attn(x, x, x, tgt_mask)
+        # Add the residual connections
+        self_attn_res = x + self.dropout(self_attn_out)
+        # Normalize output
+        self_attn_norm = self.self_attn_norm(self_attn_res)
+        
+        # Source attention output
+        src_attn_out = self.src_attn(self_attn_norm)
+        # Add the residual connections
+        src_attn_res = self_attn_norm + self.dropout(src_attn_out)
+        # Normalize output
+        src_attn_norm = self.src_attn_norm(src_attn_res)
+        
+        # Position-wise, fully-connected feed-forward output
+        ff_out = self.ff(src_attn_norm)
+        # Add the residual connections
+        ff_res = src_attn_norm + self.dropout(ff_out)
+        # Normalize output
+        ff_norm = self.ff_norm(ff_res)
+        
+        return ff_norm
+    
 
 '''
 Multi-head attention allows the model to jointly attend to information from
@@ -335,6 +293,7 @@ class MultiHeadedAttention(nn.Module):
         x = x.transpose(1, 2).contiguous().view(nbatches, -1, self.h*self.d_k)
         return self.linears[-1](x)
 
+    
 '''
 Implements the position-wise fully-connected feed-forward networks used by both
 the encoder and decoder layers. This network consists of two linear transforms
@@ -354,20 +313,24 @@ class PositionwiseFeedForward(nn.Module):
 
     def forward(self, x):
         return self.w_2(self.dropout(F.relu(self.w_1(x))))
-
+    
+    
 '''
-The paper utilizes tied embeddings (where the encoder and decoder embedding
-layers share the same weight matrix). The embeddings are also scaled by sqrt(d_model).
+Implements a normalization layer
 '''
-class Embeddings(nn.Module):
-    def __init__(self, d_model, vocab):
-        super(Embeddings, self).__init__()
-        self.lut = nn.Embedding(vocab, d_model)
-        self.d_model = d_model
+class LayerNorm(nn.Module):
+    def __init__(self, features, eps = 1e-6):
+        super(LayerNorm, self).__init__()
+        self.a_2 = nn.Parameter(torch.ones(features))
+        self.b_2 = nn.Parameter(torch.zeros(features))
+        self.eps = eps
 
     def forward(self, x):
-        return self.lut(x) * math.sqrt(self.d_model)
+        mean = x.mean(-1, keepdim = True)
+        std = x.std(-1, keepdim = True)
+        return self.a_2 * (x - mean) / (std + self.eps) + self.b_2
 
+        
 '''
 The model utilizes "positional encodings" summed with the input embeddings at
 the bottom of the encoder and decoder stacks to inject information about the
@@ -381,8 +344,8 @@ frequencies:
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, dropout, max_len = 5000):
         super(PositionalEncoding, self).__init__()
-        self.dropout = nn.Dropout(p = dropout)
-
+        self.dropout = nn.Dropout(dropout)
+        
         # Compute the positional encodings once in log space
         pe = torch.zeros(max_len, d_model)
         position = torch.arange(0, max_len).unsqueeze(1)
@@ -394,41 +357,7 @@ class PositionalEncoding(nn.Module):
         pe = pe.unsqueeze(0)
         # `register_buffer()` is used to register buffers that aren't model parameters
         self.register_buffer('pe', pe)
-
+        
     def forward(self, x):
         x = x + Variable(self.pe[:, :x.size(1)], requires_grad = False)
         return self.dropout(x)
-
-    
-
-
-class NoamOpt:
-    def __init__(self, model_size, factor, warmup, optimizer):
-        self.optimizer = optimizer
-        self._step = 0
-        self.warmup = warmup
-        self.factor = factor
-        self.model_size = model_size
-        self._rate = 0
-        
-    def step(self):
-        self._step += 1
-        rate = self.rate()
-        for p in self.optimizer.param_groups:
-            p['lr'] = rate
-        self._rate = rate
-        self.optimizer.step()
-        
-    def rate(self, step = None):
-        if step is None:
-            step = self._step
-        return self.factor * (self.model_size**(-0.5) * min(step**(-0.5), step*self.warmup**(-1.5)))
-    
-def get_std_opt(model):
-    return NoamOpt(
-        model.src_embed[0].d_model, 2, 4000,
-        torch.optim.Adam(
-            model.parameters(), lr = 0, betas = (0.9, 0.98), eps = 1e-9
-        )
-    )
-
