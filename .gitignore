@@ -218,3 +218,4 @@ pip-log.txt
 #Mr Developer
 .mr.developer.cfg
 transformer_attention/transformer_attention_old.py
+transformer_attention/.ipynb_checkpoints/transformer attention training-checkpoint.ipynb

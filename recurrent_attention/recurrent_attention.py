@@ -34,14 +34,17 @@ class RecurrentAttention(nn.Module):
             and of size `[..., out_size]`
         `rnn_type`: type of RNN cell to use. Should either be `'lstm'` or `'gru'`
             because that's all I've planned for :/
-        `rnn_layers`: number of recurrent layers in the recurrent subnetwork
+        `num_rnn_layers`: number of recurrent layers in the recurrent subnetwork
+        `attn_act_fn`: type of activation function to apply to the output of the
+            attention subnetwork; after activation, this will be fed back into
+            recurrent subnetwork. If `None`, a Linear activation is used
         `bidirectional`: whether or not the input sequence to the recurrent
             subnetwork should be made bi-directional (if `True`, `in_size` will
             be doubled)
     '''
     def __init__(self, in_size, h_size, out_size, dropout = 0.1,
                 alignment = None, attention = None, rnn_type = 'lstm',
-                num_rnn_layers = 1, bidirectional = False):
+                num_rnn_layers = 1, attn_act_fn = 'Softmax', bidirectional = False):
         super(RecurrentAttention, self).__init__()
         # Fix input parameters
         rnn_type = rnn_type.upper()
@@ -68,6 +71,15 @@ class RecurrentAttention(nn.Module):
         if attention is None:
             attention = nn.Linear(in_size + h_size + out_size, out_size)
         self.attention = attention
+        
+        # Attention output activation (for recurrent inputs)
+        if attn_act_fn is not None:
+            fn_type = attn_act_fn
+            if fn_type == 'Softmax':
+                attn_act_fn = getattr(nn, fn_type)(-1)
+            else:
+                attn_act_fn = getattr(nn, fn_type)()
+        self.attn_act_fn = attn_act_fn
         ################################################
 
         # Save parameters
@@ -114,8 +126,8 @@ class RecurrentAttention(nn.Module):
         ]
         rnn_states = [s if len(s) > 1 else s[0] for s in rnn_states]
         # Output vector
-        output = Variable(torch.zeros(batch_size, self.out_size))
-        return (output, rnn_states)
+        y = Variable(torch.zeros(batch_size, self.out_size))
+        return (y, rnn_states)
 
     # Run a batch of inputs forward through the recurrent attention mechanism
     # input : [seq_len, batch_size, in_size]
@@ -158,17 +170,11 @@ class RecurrentAttention(nn.Module):
             y = self.attention(attn_in)                                         # [batch_size, out_size]
             # Append this output to the output sequence
             y_seq.append(y.expand(1, -1, -1))
+            # Apply an activation function to the attention output
+            if self.attn_act_fn is not None:
+                y = self.attn_act_fn(y)
         # Concatenate the output sequence into a single tensor
         outputs = torch.cat(y_seq, 0)
         # Return the output sequence, last output vector y, and the new RNN states
         return outputs, (y, new_rnn_states)
-
-
-
-            
-
-
-
-
-                
 
