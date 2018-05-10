@@ -1,5 +1,9 @@
 .ipynb_checkpoints/
 __pycache__/
+transformer_attention/.ipynb_checkpoints/
+transformer_attention/__pycache__/
+recurrent_attention/.ipynb_checkpoints/
+recurrent_attention/__pycache__/
 
 #################
 ## Eclipse
@@ -219,3 +223,4 @@ pip-log.txt
 .mr.developer.cfg
 transformer_attention/transformer_attention_old.py
 transformer_attention/.ipynb_checkpoints/transformer attention training-checkpoint.ipynb
+transformer_attention/transformer attention testing - old.ipynb
