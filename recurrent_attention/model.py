@@ -188,7 +188,7 @@ class RNNModel(nn.Module):
                 
         # Attention mechanism
         attn_out, new_attn_states = self.attn(attn_in, attn_states)
-        pkg.append(new_enc_states)
+        pkg.append(new_attn_states)
         
         # Decoder stack
         if self.n_dec_layers > 0:
