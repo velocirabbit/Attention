@@ -136,7 +136,7 @@ def train(model, train_data, batch_size, seq_len,
         if batch % log_interval == 0 and batch > 0:
             elapsed = time.time() - start_time
             cur_loss = total_loss[0] / log_interval
-            print(' b {:3d}/{:3d} >> {:6.1f} ms/b | lr: {:8.2g} | grad norm: {:4.2f} | max abs grad: {:7.3f} | loss: {:4.2f} | perp.: {:6.2f}'.format(
+            print(' b {:3d}/{:3d} >> {:6.1f} ms/b | lr: {:9.4g} | grad norm: {:5.2f} | inf norm: {:7.2g} | loss: {:4.2f} | perp: {:7.2f}'.format(
                 batch, len(seq_lens), elapsed * 1000/log_interval, scaled_lr, total_norm, max_grad, cur_loss, np.exp(cur_loss)
             ))
             total_loss = 0
@@ -160,3 +160,92 @@ def evaluate(model, eval_data, eval_batch_size,
         total_loss += loss.data * data.size(0)
     return total_loss[0] / eval_data.size(0)
 
+def train_eval_loop(model, train_data, val_data, batch_size, eval_batch_size,
+                    seq_len, ntokens, criterion, eval_criterion, optimizer,
+                    lr_scheduler, epochs, warmup_steps, early_stopping = 0,
+                    clip = 2, log_interval = 150):
+    WIDTH = 110
+    CAUSES = ['output', 'grad']
+    # Early stopping
+    stagnant = 0
+    best_train_loss = None
+    best_val_loss = None
+    better = False
+    # Keep statistics
+    train_loss_hist = []
+    val_loss_hist = []
+    grad_norm_hist = []
+    grad_inf_norm_hist = []
+    max_param_hist = []
+    for epoch in range(epochs):
+        lr_scheduler.step()
+        print('Epoch {:3d}/{:3d}) lr = {:0.4g}{}'.format(epoch+1, epochs, np.mean(lr_scheduler.get_lr()[0]), ' (warmup)' if epoch < warmup_steps else ''))
+        start_time = time.time()
+        stat, train_loss, data, targets, states, nstates = train(
+            model, train_data, batch_size, seq_len, ntokens,
+            criterion, optimizer, lr_scheduler, clip, log_interval
+        )
+        if stat in list(range(len(CAUSES))):
+            c = CAUSES[stat]
+            n = (WIDTH - len(c) - 4) // 2
+            print('\n' + (' '*n) + 'NaN ' + c)
+            break
+        elapsed = time.time() - start_time
+        val_loss = evaluate(
+            model, val_data, eval_batch_size, 
+            seq_len, ntokens, eval_criterion,
+            save_wts = False
+        )
+        max_param = max([p.data.abs().max() for p in model.parameters() if p.grad is not None])
+        print('-' * WIDTH)
+        print(
+            'Elapsed time: {:6.2f} sec | train loss, perp: {:5.3f}, {:7.2f} | valid loss, perp: {:5.3f}, {:7.2f}'.format(
+                elapsed, train_loss, np.exp(train_loss), val_loss, np.exp(val_loss)
+        ))
+        train_loss_hist.append(train_loss)
+        val_loss_hist.append(val_loss)
+        # Calculate statistics
+        params = [p for p in model.parameters() if p.grad is not None]
+        inf_norm = float(max([p.grad.data.abs().max() for p in params]))
+        total_norm = float(np.sqrt(sum([
+            p.grad.data.norm(2)**2 for p in params
+        ])))
+        max_param = float(max([p.data.abs().max() for p in params]))
+        # Print statistics
+        print(
+            'Grad norm: {:6.3f} | Grad inf. norm: {:9.4g} | Max abs param: {:9.4g}'.format(
+                total_norm, inf_norm, max_param
+        ))
+        print('=' * WIDTH)
+        print('\n')
+        # Save statistics
+        grad_norm_hist.append(total_norm)
+        grad_inf_norm_hist.append(inf_norm)
+        max_param_hist.append(max_param)
+        # Check for early stopping. Either the training or validation loss has
+        # to improve each epoch. If neither does for early_stopping epochs,
+        # training ends early
+        if early_stopping > 0:
+            if best_train_loss is None or train_loss < best_train_loss:
+                best_train_loss = train_loss
+                better = True
+            if best_val_loss is None or val_loss < best_val_loss:
+                best_val_loss = val_loss
+                better = True
+            if better:
+                stagnant = 0
+                better = False
+            else:
+                stagnant += 1
+                if stagnant >= early_stopping:
+                    break
+        # End training loop
+    train_stats = {
+        'epochs': epoch + 1,
+        'train_loss': train_loss_hist,
+        'val_loss': val_loss_hist,
+        'grad_norm': grad_norm_hist,
+        'grad_inf_norm': grad_inf_norm_hist,
+        'max_param': max_param_hist
+    }
+    return train_stats, stat, train_loss, data, targets, states, nstates
