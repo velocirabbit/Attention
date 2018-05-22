@@ -6,18 +6,19 @@ from torch.autograd import Variable
 from recurrent_attention import RecurrentAttention
 
 class RNNModel(nn.Module):
-    def __init__(self, src_vocab, tgt_vocab, embed_size, h_size, decode_size,
-                 n_enc_layers, attn_rnn_layers, n_dec_layers, encode_size = 0,
-                 decode_out_size = 0, align_location = False, loc_align_size = 1,
-                 loc_align_kernel = 1, smooth_align = False, tie_wts = True,
-                 bidirectional_attn = False, skip_connections = False,
-                 dropout = 0.1):
+    def __init__(self, src_vocab, tgt_vocab, embed_size, h_size, align_size,
+                 decode_size, n_enc_layers, attn_rnn_layers, n_dec_layers,
+                 encode_size = 0, decode_out_size = 0, align_location = False,
+                 loc_align_size = 1, loc_align_kernel = 1, smooth_align = False,
+                 tie_wts = True, bidirectional_attn = False,
+                 skip_connections = False, dropout = 0.1):
         super(RNNModel, self).__init__()
         self.src_vocab = src_vocab
         self.tgt_vocab = tgt_vocab
         self.embed_size = embed_size
         self.encode_size = encode_size
         self.h_size = h_size
+        self.align_size = align_size
         self.decode_size = decode_size
         self.decode_out_size = decode_out_size
         self.n_enc_layers = n_enc_layers
@@ -55,11 +56,12 @@ class RNNModel(nn.Module):
 
         # Recurrent attention mechanism
         attn = RecurrentAttention(
-            in_size = attn_in_size, h_size = h_size, out_size = decode_size,
-            align_location = align_location, loc_align_size = loc_align_size,
-            loc_align_kernel = loc_align_kernel, smooth_align = smooth_align,
-            num_rnn_layers = attn_rnn_layers, attn_act_fn = 'ReLU',
-            dropout = dropout, bidirectional = bidirectional_attn
+            in_size = attn_in_size, h_size = h_size, align_size = align_size,
+            out_size = decode_size, align_location = align_location,
+            loc_align_size = loc_align_size, loc_align_kernel = loc_align_kernel,
+            smooth_align = smooth_align, num_rnn_layers = attn_rnn_layers,
+            attn_act_fn = 'ReLU', dropout = dropout,
+            bidirectional = bidirectional_attn
         )
         self.add_module('attn', attn)
 

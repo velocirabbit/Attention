@@ -33,6 +33,12 @@ def subsequent_mask(size):
     
 def attention(query, key, value, mask = None, dropout = None):
     '''
+    An attention function can be described as mapping a query and a set of key-
+    value pairs to an output, where they query, keys, values, and output are all
+    vectors. The output is computed as a weighted sum of the values, where the
+    weight assigned to each value is computed by a compatibility function of the
+    query with the corresponding key.
+    
     Calculates the scaled dot-product attention, defined as:
         Attention(Q, K, V) = softmax( (Q x K^T)/sqrt(d_k) ) x V
     (T denotes a matrix transpose, and x denotes matrix multiplication)
@@ -234,14 +240,20 @@ class DecoderLayer(nn.Module):
         '''
         # Normalize input
         x_norm = self.self_attn_norm(x)
-        # Masked self-attention output
+        # Masked self-attention output. This uses the batch-normed inputs as the
+        # input to each head's projections to get the query, key, and value vectors
         self_attn_out = self.self_attn(x_norm, x_norm, x_norm, tgt_mask)
         # Add the residual connections
         self_attn = x + self.dropout(self_attn_out)
         
         # Normalize input
         self_attn_norm = self.src_attn_norm(self_attn)
-        # Source attention output
+        # Source attention output. Here, the batch-normed inputs are again used
+        # as the input to each head's projections to get the query vectors, but
+        # now the sequence of weighted value vectors based on the encoded input
+        # sequence are used in the projections to get the key and value vectors.
+        # NOTE: decoder inputs are the encoder inputs shifted one step right
+        # (i.e. decoder inputs are one step behind the encoder inputs)
         src_attn_out = self.src_attn(self_attn_norm, memory, memory, src_mask)
         # Add the residual connections
         src_attn = self_attn + self.dropout(src_attn_out)

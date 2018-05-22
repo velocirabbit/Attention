@@ -10,7 +10,7 @@ from torch.autograd import Variable
 from torch.nn import functional as F
 
 class RecurrentAttention(nn.Module):
-    def __init__(self, in_size, h_size, out_size, 
+    def __init__(self, in_size, h_size, align_size, out_size, 
                 alignment = None, smooth_align = False, dropout = 0.1,
                 align_location = False, loc_align_size = 1, loc_align_kernel = 1,
                 attention = None, attn_act_fn = 'Softmax', rnn_type = 'lstm',
@@ -24,6 +24,8 @@ class RecurrentAttention(nn.Module):
         account for the doubled size if you're passing in your own `alignment`
         layer (the default will handle that automatically)  
         `h_size`: size of the recurrent hidden states  
+        `align_size`: size of the alignment vectors before being projected and
+        turned into attention weights via softmax
         `out_size`: size of the output vectors  
         `alignment`: a PyTorch module to use as the alignment subnetwork. If
         `None`, defaults to a single-layer, fully-connected, linear network. The
@@ -74,6 +76,7 @@ class RecurrentAttention(nn.Module):
         self.drop = nn.Dropout(dropout)
         self.softmax = nn.Softmax(0)
         self.sigmoid = nn.Sigmoid()
+        self.tanh = nn.Tanh()
 
         ### Initialize subnetworks ###
         # Recurrent subnetwork
@@ -98,8 +101,9 @@ class RecurrentAttention(nn.Module):
             )
         if alignment is None:
             align_in_size = in_size + h_size + (loc_align_size if align_location else 0)
-            alignment = nn.Linear(align_in_size, 1)
+            alignment = nn.Linear(align_in_size, align_size)
         self.alignment = alignment
+        self.scores = nn.Linear(align_size, 1)
 
         # Attention subnetwork
         if attention is None:
@@ -123,6 +127,7 @@ class RecurrentAttention(nn.Module):
         # Save parameters
         self.in_size = in_size
         self.h_size = h_size
+        self.align_size = align_size
         self.out_size = out_size
         self.align_location = align_location
         self.loc_align_size = loc_align_size
@@ -142,7 +147,7 @@ class RecurrentAttention(nn.Module):
         Initialize model parameters
         '''
         # Initialize the alignment and attention weights/biases
-        for subnet in [self.alignment, self.attention]:
+        for subnet in [self.alignment, self.scores, self.attention]:
             for p in subnet.parameters():
                 if p.dim() > 1:     # Glorot/Xavier uniform (fan average) init
                     nn.init.xavier_uniform(p)
@@ -232,7 +237,8 @@ class RecurrentAttention(nn.Module):
                 _loc_align_ = self.loc_align(_align_wts_)                       # [batch_size, loc_align_size, seq_len]
                 loc_align = _loc_align_.permute(2, 0, 1)                        # [seq_len, batch_size, loc_align_size]
                 align_in = torch.cat([align_in, loc_align], -1)                 # [seq_len, batch_size, in_size+h_size+loc_align_size]
-            align_logits = self.alignment(align_in)                             # [seq_len, batch_size, 1]
+            align_queries = self.tanh(self.alignment(align_in))                 # [seq_len, batch_size, align_size]
+            align_logits = self.scores(align_queries)                           # [seq_len, batch_size, 1]
             # Logit smoothing
             if self.smooth_align:
                 align_logits = self.sigmoid(align_logits)
