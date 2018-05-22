@@ -6,9 +6,9 @@ from torch.autograd import Variable
 from recurrent_attention import RecurrentAttention
 
 class RNNModel(nn.Module):
-    def __init__(self, src_vocab, tgt_vocab, embed_size, encode_size, h_size,
-                 decode_size, decode_out_size, n_enc_layers, attn_rnn_layers,
-                 n_dec_layers, align_location = False, loc_align_size = 1,
+    def __init__(self, src_vocab, tgt_vocab, embed_size, h_size, decode_size,
+                 n_enc_layers, attn_rnn_layers, n_dec_layers, encode_size = 0,
+                 decode_out_size = 0, align_location = False, loc_align_size = 1,
                  loc_align_kernel = 1, smooth_align = False, tie_wts = True,
                  bidirectional_attn = False, skip_connections = False,
                  dropout = 0.1):

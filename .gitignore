@@ -4,6 +4,7 @@ transformer_attention/.ipynb_checkpoints/
 transformer_attention/__pycache__/
 recurrent_attention/.ipynb_checkpoints/
 recurrent_attention/__pycache__/
+recurrent_attention/ignore
 
 #################
 ## Eclipse
