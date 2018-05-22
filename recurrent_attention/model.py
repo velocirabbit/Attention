@@ -156,7 +156,13 @@ class RNNModel(nn.Module):
         return tuple(pkg)
     
     def forward(self, inputs, states):
-        enc_states, attn_states, dec_states = states
+        if self.n_enc_layers > 0:
+            enc_states = states[0]
+            states = states[1:]
+        if self.n_dec_layers > 0:
+            dec_states = states[-1]
+            states = states[:-1]
+        attn_states = states[0]
         if self.save_wts:
             self.enc_out = []
             self.dec_out = []
@@ -165,30 +171,38 @@ class RNNModel(nn.Module):
         embeddings = self.embedding(inputs) * np.sqrt(self.embed_size)
         
         # Encoder stack
-        new_enc_states = []
-        enc_in = self.drop(self.relu(embeddings))
-        for states, encoder in zip(enc_states, self.encoders):
-            enc_out, new_enc_state = encoder(enc_in, states)
-            new_enc_states.append(new_enc_state)
-            if self.save_wts:
-                self.enc_out.append(enc_out.data.clone())
-            enc_in = enc_out
+        if self.n_enc_layers > 0:
+            new_enc_states = []
+            enc_in = self.drop(self.relu(embeddings))
+            for states, encoder in zip(enc_states, self.encoders):
+                enc_out, new_enc_state = encoder(enc_in, states)
+                new_enc_states.append(new_enc_state)
+                if self.save_wts:
+                    self.enc_out.append(enc_out.data.clone())
+                enc_in = enc_out
+            attn_in = enc_out
+        else:
+            attn_in = embeddings
                 
         # Attention mechanism
-        attn_out, new_attn_states = self.attn(enc_out, attn_states)
+        attn_out, new_attn_states = self.attn(attn_in, attn_states)
         
         # Decoder stack
-        new_dec_states = []
-        dec_in = attn_out
-        for states, decoder in zip(dec_states, self.decoders):
-            dec_out, new_dec_state = decoder(dec_in, states)
-            new_dec_states.append(new_dec_state)
-            if self.save_wts:
-                self.dec_out.append(dec_out.data.clone())
-            dec_in = dec_out
+        if self.n_dec_layers > 0:
+            new_dec_states = []
+            dec_in = attn_out
+            for states, decoder in zip(dec_states, self.decoders):
+                dec_out, new_dec_state = decoder(dec_in, states)
+                new_dec_states.append(new_dec_state)
+                if self.save_wts:
+                    self.dec_out.append(dec_out.data.clone())
+                dec_in = dec_out
+            proj_in = dec_out
+        else:
+            proj_in = attn_out
         
         # Projection layer
-        logits = self.projection(dec_out)
+        logits = self.projection(proj_in)
         output = self.log_softmax(logits)
         
         return output, (new_enc_states, new_attn_states, new_dec_states)
