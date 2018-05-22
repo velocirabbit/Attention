@@ -163,6 +163,7 @@ class RNNModel(nn.Module):
             dec_states = states[-1]
             states = states[:-1]
         attn_states = states[0]
+        pkg = []
         if self.save_wts:
             self.enc_out = []
             self.dec_out = []
@@ -181,11 +182,13 @@ class RNNModel(nn.Module):
                     self.enc_out.append(enc_out.data.clone())
                 enc_in = enc_out
             attn_in = enc_out
+            pkg.append(new_enc_states)
         else:
             attn_in = embeddings
                 
         # Attention mechanism
         attn_out, new_attn_states = self.attn(attn_in, attn_states)
+        pkg.append(new_enc_states)
         
         # Decoder stack
         if self.n_dec_layers > 0:
@@ -198,6 +201,7 @@ class RNNModel(nn.Module):
                     self.dec_out.append(dec_out.data.clone())
                 dec_in = dec_out
             proj_in = dec_out
+            pkg.append(new_dec_states)
         else:
             proj_in = attn_out
         
@@ -205,7 +209,7 @@ class RNNModel(nn.Module):
         logits = self.projection(proj_in)
         output = self.log_softmax(logits)
         
-        return output, (new_enc_states, new_attn_states, new_dec_states)
+        return output, tuple(pkg)
     
     def train(self, mode = True, save_wts = False):
         super(RNNModel, self).train(mode)
