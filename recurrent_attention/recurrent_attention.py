@@ -10,61 +10,60 @@ from torch.autograd import Variable
 from torch.nn import functional as F
 
 class RecurrentAttention(nn.Module):
-    '''
-    Initializes a recurrent attention mechanism.
-    
-    Inputs:
-        `in_size`: size of the input vectors. If bi-directional, use just the
-            size of the vector in just the forward direction, but make sure to
-            account for the doubled size if you're passing in your own
-            `alignment` layer (the default will handle that automatically)
-        `h_size`: size of the recurrent hidden states
-        `out_size`: size of the output vectors
-        `alignment`: a PyTorch module to use as the alignment subnetwork. If
-            `None`, defaults to a single-layer, fully-connected, linear network.
-            The input to this layer should be of size `[..., in_size+h_size]`
-            (with `in_size` accounting for whether or not the inputs will be made
-            bi-directional), and the output should be of size
-            `[..., prealignment_size]`
-        `smooth_align`: if true, passes the alignment vector logits through a
-            sigmoid function immediately before passing them through a softmax.
-            This reduces the effect very large logits have on the computed
-            alignment vector and also makes it easier for the model to consider
-            multiple locations within the sequence as "important"
-        `dropout`: dropout rate (chance of dropping)
-        `align_location`: if `True`, implements location-aware alignment by
-            taking the previous alignment vector at each step and convolving it
-            with a matrix to obtain a location vector
-        `loc_align_size`: the number of vectors to extract for each position/element
-            in the previous alignment vector (i.e. the number of output channels 
-            in the convolution kernel)
-        `loc_align_kernel`: size of the location alignment kernel used to obtain
-            the location alignment vector (i.e. the number of positions in the
-            sequence the kernel looks at during each convolution step). Padding
-            is automatically calculated and added to make sure the convolution
-            output has the same sequence length as the input. This should be an
-            odd integer (and even integer inputs will be increased by 1) since
-            the amount of padding used is `(loc_align_kernel - 1)/2`
-        `attention`: a PyTorch module to use as the attention subnetwork. If
-            `None`, defaults to a single-layer, fully-connected, linear network.
-            The input to this layer should be of size `[..., in_size+h_size+out_size]`,
-            and the output should be logits rather than softmax probabilities
-            and of size `[..., out_size]`
-        `attn_act_fn`: type of activation function to apply to the output of the
-            attention subnetwork; after activation, this will be fed back into
-            recurrent subnetwork. If `None`, a Linear activation is used
-        `rnn_type`: type of RNN cell to use. Should either be `'lstm'` or `'gru'`
-            because that's all I've planned for :/
-        `num_rnn_layers`: number of recurrent layers in the recurrent subnetwork
-        `bidirectional`: whether or not the input sequence to the recurrent
-            subnetwork should be made bi-directional (if `True`, `in_size` will
-            be doubled)
-    '''
     def __init__(self, in_size, h_size, out_size, 
                 alignment = None, smooth_align = False, dropout = 0.1,
                 align_location = False, loc_align_size = 1, loc_align_kernel = 1,
                 attention = None, attn_act_fn = 'Softmax', rnn_type = 'lstm',
                 num_rnn_layers = 1, bidirectional = False):
+        '''
+        Initializes a recurrent attention mechanism.
+        
+            Inputs:  
+        `in_size`: size of the input vectors. If bi-directional, use just the
+        size of the vector in just the forward direction, but make sure to
+        account for the doubled size if you're passing in your own `alignment`
+        layer (the default will handle that automatically)  
+        `h_size`: size of the recurrent hidden states  
+        `out_size`: size of the output vectors  
+        `alignment`: a PyTorch module to use as the alignment subnetwork. If
+        `None`, defaults to a single-layer, fully-connected, linear network. The
+        input to this layer should be of size `[..., in_size+h_size]` (with
+        `in_size` accounting for whether or not the inputs will be made bi-
+        directional), and the output should be of size `[..., prealignment_size]`  
+        `smooth_align`: if true, passes the alignment vector logits through a
+        sigmoid function immediately before passing them through a softmax. This
+        reduces the effect very large logits have on the computed alignment
+        vector and also makes it easier for the model to consider multiple
+        locations within the sequence as "important"  
+        `dropout`: dropout rate (chance of dropping)  
+        `align_location`: if `True`, implements location-aware alignment by
+        taking the previous alignment vector at each step and convolving it with
+        a matrix to obtain a location vector  
+        `loc_align_size`: the number of vectors to extract for each
+        position/element in the previous alignment vector (i.e. the number of
+        output channels in the convolution kernel)  
+        `loc_align_kernel`: size of the location alignment kernel used to obtain
+        the location alignment vector (i.e. the number of positions in the
+        sequence the kernel looks at during each convolution step). Padding is
+        automatically calculated and added to make sure the convolution output
+        has the same sequence length as the input. This should be an odd integer
+        (and even integer inputs will be increased by 1) since the amount of
+        padding used is `(loc_align_kernel - 1)/2`  
+        `attention`: a PyTorch module to use as the attention subnetwork. If
+        `None`, defaults to a single-layer, fully-connected, linear network. The
+        input to this layer should be of size `[..., in_size+h_size+out_size]`,
+        and the output should be logits rather than softmax probabilities and of
+        size `[..., out_size]`  
+        `attn_act_fn`: type of activation function to apply to the output of the
+        attention subnetwork; after activation, this will be fed back into
+        recurrent subnetwork. If `None`, a Linear activation is used  
+        `rnn_type`: type of RNN cell to use. Should either be `'lstm'` or `'gru'`
+        because that's all I've planned for :/  
+        `num_rnn_layers`: number of recurrent layers in the recurrent subnetwork
+        `bidirectional`: whether or not the input sequence to the recurrent
+        subnetwork should be made bi-directional (if `True`, `in_size` will be
+        doubled)
+        '''
         super(RecurrentAttention, self).__init__()
         # Fix input parameters
         rnn_type = rnn_type.upper()
@@ -134,9 +133,14 @@ class RecurrentAttention(nn.Module):
         self.num_rnn_layers = num_rnn_layers
         self.bidirectional = bidirectional
         self.dropout = dropout
+        
+        ### Init model parameters ###
+        self.init()
 
-    # Initialize model parameters
     def init(self):
+        '''
+        Initialize model parameters
+        '''
         # Initialize the alignment and attention weights/biases
         for subnet in [self.alignment, self.attention]:
             for p in subnet.parameters():
@@ -152,9 +156,12 @@ class RecurrentAttention(nn.Module):
                 else:               # Fill bias vectors with 0's
                     p.data.fill_(0)
 
-    # Initialize and return a set of hidden states for the recurrent network
-    # Also initializes a blank attention output vector to use as an initial output
     def init_rnn_states(self, batch_size):
+        '''
+        Initialize and return a set of hidden states for the recurrent network.
+        Also initializes a blank attention output vector to use as an initial
+        output.
+        '''
         n_states = self.num_rnn_states
         n_layers = self.num_rnn_layers
         h_size = self.h_size
@@ -173,10 +180,13 @@ class RecurrentAttention(nn.Module):
         c = Variable(torch.zeros(batch_size, self.in_size))
         return (y, c, rnn_states)
 
-    # Run a batch of inputs forward through the recurrent attention mechanism
-    # input : [seq_len, batch_size, in_size]
-    # output: [seq_len, batch_size, out_size]
     def forward(self, inputs, states):
+        '''    
+        Run a batch of inputs forward through the recurrent attention mechanism
+
+        input : `[seq_len, batch_size, in_size]`  
+        output: `[seq_len, batch_size, out_size]`  
+        '''
         # Get the recurrent states and the initial output vector
         y, c, rnn_states = states
         seq_len = inputs.size(0)

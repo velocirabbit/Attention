@@ -224,3 +224,4 @@ pip-log.txt
 transformer_attention/transformer_attention_old.py
 transformer_attention/.ipynb_checkpoints/transformer attention training-checkpoint.ipynb
 transformer_attention/transformer attention testing - old.ipynb
+recurrent_attention/smaller.ipynb

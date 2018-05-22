@@ -17,32 +17,35 @@ from torch.autograd import Variable
 import copy
 import math
 
-# Produces N copies of a module
 def clones(module, N):
+    '''
+    Produces N copies of a module.
+    '''
     return nn.ModuleList([copy.deepcopy(module) for _ in range(N)])
 
-# Creates a mask to zero out subsequent positions using a lower triangle matrix
 def subsequent_mask(size):
+    '''
+    Creates a mask to zero out subsequent positions using a lower triangle matrix
+    '''
     attn_shape = (1, size, size)
     subsequent_mask = np.triu(np.ones(attn_shape), k = 1).astype('uint8')
     return torch.from_numpy(subsequent_mask) == 0
     
-'''
-Calculates the scaled dot-product attention, defined as:
-
-    Attention(Q, K, V) = softmax( (Q x K^T)/sqrt(d_k) ) x V
-
-      (T denotes a matrix transpose, and x denotes matrix multiplication)
-The input to the attention consists of queries and keys of dimension d_k and
-values of dimension d_v. We compute the dot products of the query with all keys,
-divide each by sqrt(d_k), and apply a softmax to obtain the weights on the
-values.
-
-In practice, this is done by computing the attention function on a set of
-queries simultaneously, packed together into a matrix Q. The keys and values
-are also packed together into matrices K and V.
-'''
 def attention(query, key, value, mask = None, dropout = None):
+    '''
+    Calculates the scaled dot-product attention, defined as:
+        Attention(Q, K, V) = softmax( (Q x K^T)/sqrt(d_k) ) x V
+    (T denotes a matrix transpose, and x denotes matrix multiplication)
+
+    The input to the attention consists of queries and keys of dimension `d_k`
+    and values of dimension `d_v`. We compute the dot products of the query with
+    all keys, divide each by `sqrt(d_k)`, and apply a softmax to obtain the
+    weights on the values.
+
+    In practice, this is done by computing the attention function on a set of
+    queries simultaneously, packed together into a matrix `Q`. The keys and
+    values are also packed together into matrices `K` and `V`.
+    '''
     d_k = query.size(-1)
     # query:  [nbatches, h, seq_len, d_k]
     # key.T:  [nbatches, h, d_k, seq_len]
@@ -58,29 +61,29 @@ def attention(query, key, value, mask = None, dropout = None):
 
     
 class TransformerAttention(nn.Module):
-    '''
-    Initializes a Transformer Attention mechanism. The main focus of this
-    implementation are the encoder and decoder stacks, but since this type of
-    attention mechanism is typically used with positional encoding added to the
-    input embeddings, there's the option to do so; this should probably only be
-    used when the input to this layer is the output of an embedding layer, but
-    maybe there's some innovation I'm missing.
-    
-    Inputs:
-        `src_vocab`: size of the source vocabulary
-        `tgt_vocab`: size of the target vocabulary
-        `d_model`: embedding (and general model) size
-        `d_ff`: size of the position-wise, fully-connected feed-forward layers
-        `h`: number of attention heads
-        `N`: number of encoder and decoder layers
-        `encode_position`: whether or not to add positional encoding to the inputs
-        `pos_enc_max_len`: maximum length of the sequece positions to encode.
-            Ignored if `encode_position` is `False`.
-        `dropout`: dropout rate (chance of dropping)
-    '''
     def __init__(self, src_vocab, tgt_vocab, d_model = 512,
                 d_ff = 2048, h = 8, N = 6, encode_position = True,
                 pos_enc_max_len = 5000, dropout = 0.1):
+        '''
+        Initializes a Transformer Attention mechanism. The main focus of this
+        implementation are the encoder and decoder stacks, but since this type
+        of attention mechanism is typically used with positional encoding added
+        to the input embeddings, there's the option to do so; this should
+        probably only be used when the input to this layer is the output of an
+        embedding layer, but maybe there's some innovation I'm missing.
+        
+            Inputs:
+        `src_vocab`: size of the source vocabulary  
+        `tgt_vocab`: size of the target vocabulary  
+        `d_model`: embedding (and general model) size  
+        `d_ff`: size of the position-wise, fully-connected feed-forward layers  
+        `h`: number of attention heads  
+        `N`: number of encoder and decoder layers  
+        `encode_position`: whether or not to add positional encoding to the inputs  
+        `pos_enc_max_len`: maximum length of the sequece positions to encode.
+        Ignored if `encode_position` is `False`.  
+        `dropout`: dropout rate (chance of dropping)  
+        '''
         super(TransformerAttention, self).__init__()
         
         # Initialize some basic layers
@@ -111,9 +114,11 @@ class TransformerAttention(nn.Module):
         self.encode_position = encode_position
         self.pos_enc_max_len = pos_enc_max_len
         
-    # IN: [batch_size, seq_len, embed_size]
-    # OUT: [batch_size, seq_len, embed_size]
     def forward(self, src, tgt, src_mask = None, tgt_mask = None):
+        '''
+        IN: `[batch_size, seq_len, embed_size]`  
+        OUT: `[batch_size, seq_len, embed_size]`  
+        '''
         if self.encode_position:
             # Apply positional encoding
             src = self.src_position(src)
@@ -134,15 +139,15 @@ class TransformerAttention(nn.Module):
         return output
 
             
-'''
-Implements a single encoder layer. Each layer has two sublayers:
-    1. a multi-headed self-attention mechanism
-    2. a position-wise, fully-connected feed-forward network
-The output of each sublayer has a residual connection added, and then is
-passed through a normalization layer before being passed on as the input to the
-next sublayer.
-'''
 class EncoderLayer(nn.Module):
+    '''
+    Implements a single encoder layer. Each layer has two sublayers:
+        1. a multi-headed self-attention mechanism
+        2. a position-wise, fully-connected feed-forward network
+    The output of each sublayer has a residual connection added, and then is
+    passed through a normalization layer before being passed on as the input to
+    the next sublayer.
+    '''
     def __init__(self, d_model, d_ff, h, dropout):
         super(EncoderLayer, self).__init__()
         # Basic layers
@@ -161,9 +166,11 @@ class EncoderLayer(nn.Module):
         self.d_ff = d_ff
         self.h = h
     
-    # IN: [batch_size, seq_len, embed_size]
-    # OUT: [batch_size, seq_len, embed_size]
     def forward(self, x, mask = None):
+        '''
+        IN: `[batch_size, seq_len, embed_size]`  
+        OUT: `[batch_size, seq_len, embed_size]`  
+        '''
         # Normalize input
         x_norm = self.attn_norm(x)
         # Get the output of the multi-headed self-attention mechanism
@@ -181,23 +188,23 @@ class EncoderLayer(nn.Module):
         return ff
 
         
-'''
-Implements a single decoder layer. Each layer has three sublayers, the first
-and last being the same as in an encoder layer (with the first sublayer's
-inputs masked):
-    1. a masked multi-head self-attention mechanism. The masking is used to
-       prevent positions from attending to subsequent positions; this, combined
-       with the fact that the output embeddings are offset by one position,
-       ensures that the predictions for position i can depend only on the known
-       outputs at positions less than i
-    2. a multi-head source attention mechanism. This is performed over the
-       output of the encoder stack
-    3. a position-wise fully-connected feed-forward network
-Like with the encoder layers, the output of each sublayer has a residual
-connection added, and then is passed through a normalization layer before being
-passed on as the input to the next sublayer.
-'''
 class DecoderLayer(nn.Module):
+    '''
+    Implements a single decoder layer. Each layer has three sublayers, the first
+    and last being the same as in an encoder layer (with the first sublayer's
+    inputs masked):
+        1. a masked multi-head self-attention mechanism. The masking is used to
+        prevent positions from attending to subsequent positions; this, combined
+        with the fact that the output embeddings are offset by one position,
+        ensures that the predictions for position i can depend only on the known
+        outputs at positions less than i
+        2. a multi-head source attention mechanism. This is performed over the
+        output of the encoder stack
+        3. a position-wise fully-connected feed-forward network
+    Like with the encoder layers, the output of each sublayer has a residual
+    connection added, and then is passed through a normalization layer before
+    being passed on as the input to the next sublayer.
+    '''
     def __init__(self, d_model, d_ff, h, dropout):
         super(DecoderLayer, self).__init__()
         # Basic layers
@@ -220,16 +227,17 @@ class DecoderLayer(nn.Module):
         self.d_ff = d_ff
         self.h = h
         
-    # IN: [batch_size, seq_len, embed_size]
-    # OUT: [batch_size, seq_len, embed_size]
     def forward(self, x, memory, src_mask = None, tgt_mask = None):
+        '''
+        IN: `[batch_size, seq_len, embed_size]`  
+        OUT: `[batch_size, seq_len, embed_size]`  
+        '''
         # Normalize input
         x_norm = self.self_attn_norm(x)
         # Masked self-attention output
         self_attn_out = self.self_attn(x_norm, x_norm, x_norm, tgt_mask)
         # Add the residual connections
         self_attn = x + self.dropout(self_attn_out)
-        
         
         # Normalize input
         self_attn_norm = self.src_attn_norm(self_attn)
@@ -248,24 +256,18 @@ class DecoderLayer(nn.Module):
         return ff
     
 
-'''
-Multi-head attention allows the model to jointly attend to information from
-different representation subspaces at different positions; with a single
-attention head, averaging inhibits this.
-
-    MultiHead(Q, K, V) = Concat(head_1, ..., head_h) x WO
-
-where:
-
-    head_i = Attention(Q x WQ_i, K x WK_i, V x WV_i)
-
-where the projections are parameter matrices (of sizes):
-
-    WQ_i (d_model, d_k), WK_i (d_model, d_k), WV_i (d_model, d_v)
-
-The paper uses h=8 parallel attention layers/heads.
-'''
 class MultiHeadedAttention(nn.Module):
+    '''
+    Multi-head attention allows the model to jointly attend to information from
+    different representation subspaces at different positions; with a single
+    attention head, averaging inhibits this.
+        MultiHead(Q, K, V) = Concat(head_1, ..., head_h) x WO
+    where:
+        head_i = Attention(Q x WQ_i, K x WK_i, V x WV_i)
+    where the projections are parameter matrices (of sizes):
+        WQ_i (d_model, d_k), WK_i (d_model, d_k), WV_i (d_model, d_v)
+    The paper uses `h=8` parallel attention layers/heads.
+    '''
     def __init__(self, h, d_model, dropout = 0.1):
         super(MultiHeadedAttention, self).__init__()
         # Ensure number of heads is a multiple of the embedding size
@@ -300,17 +302,15 @@ class MultiHeadedAttention(nn.Module):
         return self.linears[-1](x)
 
     
-'''
-Implements the position-wise fully-connected feed-forward networks used by both
-the encoder and decoder layers. This network consists of two linear transforms
-with a ReLU activation in between, and is applied to each time position
-separately and identically:
-
-    FFN(x) = max(0, X x W_1 + b_1) x W_2 + b_2
-
-Another way of describing this is as two convolutions with kernel size 1.
-'''
 class PositionwiseFeedForward(nn.Module):
+    '''
+    Implements the position-wise fully-connected feed-forward networks used by
+    both the encoder and decoder layers. This network consists of two linear
+    transforms with a ReLU activation in between, and is applied to each time
+    position separately and identically:
+        FFN(x) = max(0, X x W_1 + b_1) x W_2 + b_2
+    Another way of describing this is as two convolutions with kernel size 1.
+    '''
     def __init__(self, d_model, d_ff, dropout = 0.1):
         super(PositionwiseFeedForward, self).__init__()
         self.w_1 = nn.Linear(d_model, d_ff)
@@ -321,10 +321,10 @@ class PositionwiseFeedForward(nn.Module):
         return self.w_2(self.dropout(F.relu(self.w_1(x))))
     
     
-'''
-Implements a normalization layer
-'''
 class LayerNorm(nn.Module):
+    '''
+    Implements a normalization layer
+    '''
     def __init__(self, features, eps = 1e-6):
         super(LayerNorm, self).__init__()
         self.a_2 = nn.Parameter(torch.ones(features))
@@ -337,17 +337,16 @@ class LayerNorm(nn.Module):
         return self.a_2 * (x - mean) / (std + self.eps) + self.b_2
 
         
-'''
-The model utilizes "positional encodings" summed with the input embeddings at
-the bottom of the encoder and decoder stacks to inject information about the
-positions of the tokens in the sequence (since the model contains no recurrence
-or convolution). The paper uses sine and cosine functions of different
-frequencies:
-
-    PE(pos, 2i)   = sin(pos / 10000^(2i/d_model))
-    PE(pos, 2i+1) = cos(pos / 10000^(2i/d_model))
-'''
 class PositionalEncoding(nn.Module):
+    '''
+    The model utilizes "positional encodings" summed with the input embeddings
+    at the bottom of the encoder and decoder stacks to inject information about
+    the positions of the tokens in the sequence (since the model contains no
+    recurrence or convolution). The paper uses sine and cosine functions of
+    different frequencies:
+        PE(pos, 2i)   = sin(pos / 10000^(2i/d_model))
+        PE(pos, 2i+1) = cos(pos / 10000^(2i/d_model))
+    '''
     def __init__(self, d_model, dropout, max_len = 5000):
         super(PositionalEncoding, self).__init__()
         self.dropout = nn.Dropout(dropout)
@@ -364,9 +363,11 @@ class PositionalEncoding(nn.Module):
         # `register_buffer()` is used to register buffers that aren't model parameters
         self.register_buffer('pe', pe)
         
-    # IN: [batch_size, seq_len, embed_size]
-    # OUT: [batch_size, seq_len, embed_size]
     def forward(self, x):
+        '''
+        IN: `[batch_size, seq_len, embed_size]`  
+        OUT: `[batch_size, seq_len, embed_size]`  
+        '''
         x = x + Variable(self.pe[:, :x.size(1)], requires_grad = False)
         return self.dropout(x)
         
