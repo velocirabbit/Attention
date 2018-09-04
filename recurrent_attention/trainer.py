@@ -1,5 +1,6 @@
 import time
 
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
@@ -53,7 +54,7 @@ def get_lr_scheduler(h_size, warmup, decay_factor, optimizer):
     '''
     The learning rate scheduler sets the learning rate factor according to:  
     
-        lr = d^(-factor) * min(epoch^(-factor), epoch*warmup^(-(factor+1)))
+        lr = d^(-0.5) * min(epoch^(-factor), epoch*warmup^(-(factor+1)))
     
     This corresponds to increasing the learning rate linearly for the first
     `warmup` epochs, then decreasing it proportionally to the inverse
@@ -63,6 +64,20 @@ def get_lr_scheduler(h_size, warmup, decay_factor, optimizer):
             (e+1)**(-decay_factor), (e+1) * warmup**(-(decay_factor+1))
         )
     return optim.lr_scheduler.LambdaLR(optimizer, lr_lambda = lrate)
+
+def visualize_model_parameters(model):
+    params = [p for p in model.parameters() if p.grad is not None]
+    fig, axs = plt.subplots(1, 2, figsize = (15, 5))
+
+    weights = np.array(torch.cat([w.data.view(-1) for w in params if w.dim() > 1]))
+    axs[0].hist(weights, bins = 'auto', density = True, stacked = True)
+    axs[0].set_title('Weights (mean: %.3e, var: %.3e)' % (np.mean(weights), np.var(weights)))
+
+    biases = np.array(torch.cat([b.data for b in params if b.dim() == 1]))
+    axs[1].hist(biases, bins = 'auto', density = True, stacked = True)
+    axs[1].set_title('Biases (mean: %.3e, var: %.3e)' % (np.mean(biases), np.var(biases)))
+
+    plt.show()
 
 '''
 Training and evaluation loops
@@ -108,21 +123,20 @@ def train(model, train_data, batch_size, seq_len,
         # Run the model forward
         output, _states = model(data, states)
         if np.isnan(output.data).any():
-            return 0, total_epoch_loss[0], data, targets, states, _states
+            return 0, total_epoch_loss[0], data, targets, states, _states, 0., 0.
         # Calculate loss
         loss = criterion(output.view(-1, ntokens), targets)
         if np.isnan(loss.data[0]):
-            return 1, total_epoch_loss[0], data, targets, states, _states
+            return 1, total_epoch_loss[0], data, targets, states, _states, 0., 0.
         states = _states
         # Propagate loss gradient backwards
         loss.backward()
         # Clip gradients
-        if batch % log_interval == 0 and batch > 0:
-            # Save gradient statistics before they're changed cuz we'll be logging this batch
-            parameters = [p for p in model.parameters() if p.grad is not None]
-            # Calculate the largest (absolute) gradient of all elements in the model parameters
-            max_grad = max([p.grad.data.abs().max() for p in parameters])
-        total_norm = nn.utils.clip_grad_norm(model.parameters(), clip)
+        inf_norm = max(p.grad.data.abs().max() for p in model.parameters() if p.grad is not None)
+        # Experimental -- let the grad norm clip threshold scale with the
+        # infinity norm. This will effectively increase the threshold as
+        # training progresses.
+        total_norm = nn.utils.clip_grad_norm(model.parameters(), max(clip, inf_norm))
         # Scale the batch learning rate so that shorter sequences aren't "stronger"
         scaled_lr = lr_scheduler.get_lr()[0] * np.sqrt(seq_lens[i] / seq_len)
         for param_group in optimizer.param_groups:
@@ -136,12 +150,12 @@ def train(model, train_data, batch_size, seq_len,
         if batch % log_interval == 0 and batch > 0:
             elapsed = time.time() - start_time
             cur_loss = total_loss[0] / log_interval
-            print(' b {:3d}/{:3d} >> {:6.1f} ms/b | lr: {:9.4g} | grad norm: {:5.2f} | inf norm: {:7.2g} | loss: {:4.2f} | perp: {:7.2f}'.format(
-                batch, len(seq_lens), elapsed * 1000/log_interval, scaled_lr, total_norm, max_grad, cur_loss, np.exp(cur_loss)
+            print(' b {:3d}/{:3d} >> {:6.1f} ms/b | lr: {:9.4g} | grad norm: {:5.2f} | inf norm: {:6.3f} | loss: {:4.2f} | perp: {:6.2f}'.format(
+                batch, len(seq_lens), elapsed * 1000/log_interval, scaled_lr, total_norm, inf_norm, cur_loss, np.exp(cur_loss)
             ))
             total_loss = 0
             start_time = time.time()
-    return -1, total_epoch_loss[0] / num_data, None, None, None, None
+    return -1, total_epoch_loss[0] / num_data, None, None, None, None, total_norm, inf_norm
 
 def evaluate(model, eval_data, eval_batch_size,
              seq_len, ntokens, criterion, save_wts = True):
@@ -163,25 +177,37 @@ def evaluate(model, eval_data, eval_batch_size,
 def train_eval_loop(model, train_data, val_data, batch_size, eval_batch_size,
                     seq_len, ntokens, criterion, eval_criterion, optimizer,
                     lr_scheduler, epochs, warmup_steps, early_stopping = 0,
-                    clip = 2, log_interval = 150):
-    WIDTH = 110
+                    clip = 2, log_interval = 150, ckpt = None):
+    '''
+    `ckpt`: if a string, indicates the filepath to where saved model checkpoints
+    should go.  
+    '''
+    WIDTH = 108
     CAUSES = ['output', 'grad']
     # Early stopping
     stagnant = 0
     best_train_loss = None
+    best_train_loss_epoch = 0
     best_val_loss = None
-    better = False
+    best_val_loss_epoch = 0
+    better = better_train = better_val = False  # This is just because I'm real extra
     # Keep statistics
-    train_loss_hist = []
-    val_loss_hist = []
-    grad_norm_hist = []
+    train_loss_hist    = []
+    val_loss_hist      = []
+    grad_norm_hist     = []
     grad_inf_norm_hist = []
-    max_param_hist = []
+    weight_max_hist    = []
+    weight_mean_hist   = []
+    weight_var_hist    = []
+    bias_max_hist      = []
+    bias_mean_hist     = []
+    bias_var_hist      = []
+
     for epoch in range(epochs):
         lr_scheduler.step()
-        print('Epoch {:3d}/{:3d}) lr = {:0.4g}{}'.format(epoch+1, epochs, np.mean(lr_scheduler.get_lr()[0]), ' (warmup)' if epoch < warmup_steps else ''))
+        print('Epoch {:3d}/{:3d}) lr = {:.4g}{}'.format(epoch+1, epochs, np.mean(lr_scheduler.get_lr()[0]), ' (warmup)' if epoch < warmup_steps else ''))
         start_time = time.time()
-        stat, train_loss, data, targets, states, nstates = train(
+        stat, train_loss, data, targets, states, nstates, total_norm, inf_norm = train(
             model, train_data, batch_size, seq_len, ntokens,
             criterion, optimizer, lr_scheduler, clip, log_interval
         )
@@ -196,56 +222,90 @@ def train_eval_loop(model, train_data, val_data, batch_size, eval_batch_size,
             seq_len, ntokens, eval_criterion,
             save_wts = False
         )
-        max_param = max([p.data.abs().max() for p in model.parameters() if p.grad is not None])
-        print('-' * WIDTH)
-        print(
-            'Elapsed time: {:6.2f} sec | train loss, perp: {:5.3f}, {:7.2f} | valid loss, perp: {:5.3f}, {:7.2f}'.format(
-                elapsed, train_loss, np.exp(train_loss), val_loss, np.exp(val_loss)
-        ))
         train_loss_hist.append(train_loss)
         val_loss_hist.append(val_loss)
         # Calculate statistics
         params = [p for p in model.parameters() if p.grad is not None]
-        inf_norm = float(max([p.grad.data.abs().max() for p in params]))
-        total_norm = float(np.sqrt(sum([
-            p.grad.data.norm(2)**2 for p in params
-        ])))
-        max_param = float(max([p.data.abs().max() for p in params]))
-        # Print statistics
-        print(
-            'Grad norm: {:6.3f} | Grad inf. norm: {:9.4g} | Max abs param: {:9.4g}'.format(
-                total_norm, inf_norm, max_param
-        ))
-        print('=' * WIDTH)
-        print('\n')
+        weights = [p for p in params if p.dim() > 1]
+        biases = [p for p in params if p.dim() == 1]
+
+        weight_max = max(w.data.abs().max() for w in weights)
+        weight_mean = np.mean(torch.cat([w.data.view(-1) for w in weights]))
+        weight_var = np.var(torch.cat([w.data.view(-1) for w in weights]))
+        bias_max = max(b.data.abs().max() for b in biases)
+        bias_mean = np.mean(torch.cat([b.data.view(-1) for b in biases]))
+        bias_var = np.var(torch.cat([b.data.view(-1) for b in biases]))
+
         # Save statistics
         grad_norm_hist.append(total_norm)
         grad_inf_norm_hist.append(inf_norm)
-        max_param_hist.append(max_param)
+        weight_max_hist.append(weight_max)
+        weight_mean_hist.append(weight_mean)
+        weight_var_hist.apend(weight_var)
+        bias_max_hist.append(bias_max)
+        bias_mean_hist.append(bias_mean)
+        bias_var_hist.append(bias_var)
+        
         # Check for early stopping. Either the training or validation loss has
         # to improve each epoch. If neither does for early_stopping epochs,
         # training ends early
-        if early_stopping > 0:
-            if best_train_loss is None or train_loss < best_train_loss:
-                best_train_loss = train_loss
-                better = True
-            if best_val_loss is None or val_loss < best_val_loss:
-                best_val_loss = val_loss
-                better = True
-            if better:
-                stagnant = 0
-                better = False
-            else:
-                stagnant += 1
-                if stagnant >= early_stopping:
-                    break
+        if best_train_loss is None or train_loss <= best_train_loss:
+            best_train_loss = train_loss
+            best_train_loss_epoch = epoch
+            better = better_train = True
+        if best_val_loss is None or val_loss <= best_val_loss:
+            best_val_loss = val_loss
+            best_val_loss_epoch = epoch
+            better = better_val = True
+
+        visualize_model_parameters(model)
+        
+        print('-' * WIDTH)
+        print(
+            'Elapsed time: {:7.2f} sec | Grad norm: {:6.3f} | Grad inf. norm: {:7.4f} | train loss, perp: {:5.3f}, {:6.2f} {} | valid loss, perp: {:5.3f}, {:6.2f} {}'.format(
+                elapsed, total_norm, inf_norm,
+                train_loss, np.exp(train_loss), '  ' if better_train else ':(',
+                val_loss, np.exp(val_loss), '  ' if better_val else ':('
+        ))
+        # Print statistics
+        print(
+            'Wt max: {:6.3f} | Wt mean: {:6.3f} | Wt var: {:.3e} | Bias max: {:6.3f} | Bias mean: {:6.3f} | Bias var: {:.3e}'.format(
+                weight_max, weight_mean, weight_var, bias_max, bias_mean, bias_var
+        ))
+        print('=' * WIDTH)
+        print('\n')
+        
+        if better:
+            stagnant = 0
+            better = better_train = better_val = False
+            if ckpt is not None:
+                torch.save(model, ckpt)
+        else:
+            stagnant += 1
+            if stagnant >= early_stopping and early_stopping > 0:
+                break
         # End training loop
     train_stats = {
-        'epochs': epoch + 1,
-        'train_loss': train_loss_hist,
-        'val_loss': val_loss_hist,
-        'grad_norm': grad_norm_hist,
-        'grad_inf_norm': grad_inf_norm_hist,
-        'max_param': max_param_hist
+        'epochs'        : epoch + 1,
+        'train_loss'    : train_loss_hist,
+        'val_loss'      : val_loss_hist,
+        'grad_norm'     : grad_norm_hist,
+        'grad_inf_norm' : grad_inf_norm_hist,
+        'weight_max'    : weight_max_hist,
+        'weight_mean'   : weight_mean_hist,
+        'weight_var'    : weight_var_hist,
+        'bias_max'      : bias_max_hist,
+        'bias_mean'     : bias_mean_hist,
+        'bias_var'      : bias_var_hist,
+        'best_losses'   : {
+            'train' : {
+                'loss'  : best_train_loss,
+                'epoch' : best_train_loss_epoch + 1,
+            },
+            'val'   : {
+                'loss'  : best_val_loss,
+                'epoch' : best_val_loss_epoch + 1,
+            },
+        },
     }
     return train_stats, stat, train_loss, data, targets, states, nstates

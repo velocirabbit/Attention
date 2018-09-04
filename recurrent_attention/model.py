@@ -38,8 +38,7 @@ class RNNModel(nn.Module):
         self.relu = nn.ReLU()
         
         # Embedding layers
-        embedding = nn.Embedding(src_vocab, embed_size)
-        self.add_module('embedding', embedding)
+        self.embedding = nn.Embedding(src_vocab, embed_size)
         
         # Encoder layers
         if n_enc_layers > 0:
@@ -55,15 +54,13 @@ class RNNModel(nn.Module):
             attn_in_size = embed_size
 
         # Recurrent attention mechanism
-        attn = RecurrentAttention(
+        self.attn = RecurrentAttention(
             in_size = attn_in_size, h_size = h_size, align_size = align_size,
             out_size = decode_size, align_location = align_location,
             loc_align_size = loc_align_size, loc_align_kernel = loc_align_kernel,
             smooth_align = smooth_align, num_rnn_layers = attn_rnn_layers,
-            attn_act_fn = 'ReLU', dropout = dropout,
-            bidirectional = bidirectional_attn
+            attn_act_fn = 'ReLU', dropout = dropout, bidirectional = bidirectional_attn
         )
-        self.add_module('attn', attn)
 
         # Decoder layers
         if n_dec_layers > 0:
@@ -89,8 +86,7 @@ class RNNModel(nn.Module):
                 self.decode_skip = nn.Linear(decode_size, decode_out_size)
 
         # Projection layer
-        projection = nn.Linear(project_in_size, tgt_vocab)
-        self.add_module('projection', projection)
+        self.projection = nn.Linear(project_in_size, tgt_vocab, bias = False)
 
         # Tie weights
         if tie_wts and src_vocab == tgt_vocab and embed_size == project_in_size:
@@ -177,13 +173,17 @@ class RNNModel(nn.Module):
         if self.n_enc_layers > 0:
             new_enc_states = []
             enc_in = self.drop(self.relu(embeddings))
-            for states, encoder in zip(enc_states, self.encoders):
+            for i, (states, encoder) in enumerate(zip(enc_states, self.encoders)):
                 enc_out, new_enc_state = encoder(enc_in, states)
                 new_enc_states.append(new_enc_state)
                 if self.save_wts:
                     self.enc_out.append(enc_out.data.clone())
-                enc_in = enc_out
-            attn_in = enc_out
+                if self.skip_connections:
+                    if i == 0:
+                        enc_in = self.drop(self.embed_skip(enc_in))
+                    enc_out = enc_out + enc_in
+                enc_in = self.drop(enc_out)
+            attn_in = enc_in
             pkg.append(new_enc_states)
         else:
             attn_in = embeddings
@@ -196,13 +196,17 @@ class RNNModel(nn.Module):
         if self.n_dec_layers > 0:
             new_dec_states = []
             dec_in = attn_out
-            for states, decoder in zip(dec_states, self.decoders):
+            for i, (states, decoder) in enumerate(zip(dec_states, self.decoders)):
                 dec_out, new_dec_state = decoder(dec_in, states)
                 new_dec_states.append(new_dec_state)
                 if self.save_wts:
                     self.dec_out.append(dec_out.data.clone())
-                dec_in = dec_out
-            proj_in = dec_out
+                if self.skip_connections:
+                    if i == self.n_dec_layers - 1:
+                        dec_in = self.drop(self.decode_skip(dec_in))
+                    dec_out = dec_out + dec_in
+                dec_in = self.drop(dec_out)
+            proj_in = dec_in
             pkg.append(new_dec_states)
         else:
             proj_in = attn_out

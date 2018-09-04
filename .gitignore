@@ -2,15 +2,18 @@
 __pycache__/
 transformer_attention/.ipynb_checkpoints/
 transformer_attention/__pycache__/
+transformer_attention/checkpoints/
 transformer_attention/data/
-transformer_attention/stats/
+transformer_attention/ignore/
 transformer_attention/models/
+transformer_attention/stats/
 recurrent_attention/.ipynb_checkpoints/
 recurrent_attention/__pycache__/
-recurrent_attention/ignore/
+recurrent_attention/checkpoints/
 recurrent_attention/data/
-recurrent_attention/stats/
+recurrent_attention/ignore/
 recurrent_attention/models/
+recurrent_attention/stats/
 
 #################
 ## Eclipse

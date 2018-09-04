@@ -62,7 +62,7 @@ def attention(query, key, value, mask = None, dropout = None):
     p_attn = F.softmax(scores, dim = -1)
     if dropout is not None:
         p_attn = dropout(p_attn)
-    # matmul(p_attn, value) => [nbatches, h, seq_len, d_k]
+    # matmul(p_attn, value) => [nbatches, h, seq_len, d_v] (d_v == d_k here)
     return torch.matmul(p_attn, value), p_attn
 
     
@@ -272,12 +272,12 @@ class MultiHeadedAttention(nn.Module):
     '''
     Multi-head attention allows the model to jointly attend to information from
     different representation subspaces at different positions; with a single
-    attention head, averaging inhibits this.
-        MultiHead(Q, K, V) = Concat(head_1, ..., head_h) x WO
-    where:
-        head_i = Attention(Q x WQ_i, K x WK_i, V x WV_i)
-    where the projections are parameter matrices (of sizes):
-        WQ_i (d_model, d_k), WK_i (d_model, d_k), WV_i (d_model, d_v)
+    attention head, averaging inhibits this.  
+        MultiHead(Q, K, V) = Concat(head_1, ..., head_h) x WO  
+    where:  
+        head_i = Attention(Q x WQ_i, K x WK_i, V x WV_i)  
+    where the projections are parameter matrices (of sizes):  
+        WQ_i (d_model, d_k), WK_i (d_model, d_k), WV_i (d_model, d_v)  
     The paper uses `h=8` parallel attention layers/heads.
     '''
     def __init__(self, h, d_model, dropout = 0.1):
@@ -298,7 +298,7 @@ class MultiHeadedAttention(nn.Module):
             mask = mask.unsqueeze(1)
         nbatches = query.size(0)
 
-        # Perform batched linear projections: d_model => h x d_k
+        # Perform batched linear projections: d_model = h * d_k
         # Each is of size [nbatches, h, seq_len, d_k]
         query, key, value = [
             l(x).view(nbatches, -1, self.h, self.d_k).transpose(1, 2)
@@ -309,7 +309,7 @@ class MultiHeadedAttention(nn.Module):
         x, self.attn = attention(query, key, value, mask = mask, dropout = self.dropout)
 
         # Concat using a view and apply a final linear transformation
-        # [nbatches, seq_len, h, d_k]
+        # [nbatches, seq_len, h, d_k] => [nbatches, seq_len, d_model]
         x = x.transpose(1, 2).contiguous().view(nbatches, -1, self.h*self.d_k)
         return self.linears[-1](x)
 

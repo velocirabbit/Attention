@@ -31,7 +31,7 @@ class RecurrentAttention(nn.Module):
         `None`, defaults to a single-layer, fully-connected, linear network. The
         input to this layer should be of size `[..., in_size+h_size]` (with
         `in_size` accounting for whether or not the inputs will be made bi-
-        directional), and the output should be of size `[..., prealignment_size]`  
+        directional), and the output should be of size `[..., align_size]`  
         `smooth_align`: if true, passes the alignment vector logits through a
         sigmoid function immediately before passing them through a softmax. This
         reduces the effect very large logits have on the computed alignment
@@ -156,8 +156,8 @@ class RecurrentAttention(nn.Module):
         # Initialize the recurrent subnetwork weights/biases
         for layer in self.rnn_stack:
             for p in layer.parameters():
-                if p.dim() > 1:     # Glorot/Xavier normal init
-                    nn.init.xavier_normal(p)
+                if p.dim() > 1:
+                    nn.init.orthogonal(p)  #xavier_normal(p)
                 else:               # Fill bias vectors with 0's
                     p.data.fill_(0)
 
@@ -254,27 +254,27 @@ class RecurrentAttention(nn.Module):
             if self.attn_act_fn is not None:
                 y = self.attn_act_fn(y)
             # Append this output to the output sequence
-            y_seq.append(y.unsqueeze(0))                                        # [1, batch_size, out_size]
+            y_seq.append(y)                                                     # [batch_size, out_size]
         # Concatenate the output sequence into a single tensor
-        outputs = torch.cat(y_seq, 0)                                           # [seq_len, batch_size, out_size]
+        outputs = torch.stack(y_seq, dim = 0)                                   # [seq_len, batch_size, out_size]
         # Concatenate all of the thing we need for visualization
         if self.save_attn_wts:
             self.attn_wts = torch.cat(all_attn_wts, -1)
             if isinstance(rnn_states[0], tuple):
               self.rnn_states = [
                   (
-                      torch.cat([  # Hidden states
-                          all_rnn_states[t][i][0].unsqueeze(-1) for t in range(seq_len)
+                      torch.stack([  # Hidden states
+                          all_rnn_states[t][i][0] for t in range(seq_len)
                       ], -1).data.clone(),
-                      torch.cat([  # Cell states
-                          all_rnn_states[t][i][1].unsqueeze(-1) for t in range(seq_len)
+                      torch.stack([  # Cell states
+                          all_rnn_states[t][i][1] for t in range(seq_len)
                       ], -1).data.clone()
                   ) for i in range(self.num_rnn_layers)
               ]
             else:
               self.rnn_states = [
-                  torch.cat([
-                      all_rnn_states[t][i].unsqueeze(-1) for t in range(seq_len)
+                  torch.stack([
+                      all_rnn_states[t][i] for t in range(seq_len)
                   ], -1).data.clone() for i in range(self.num_rnn_layers)
               ]
         # Return the output sequence, last output vector y, and the new RNN states
